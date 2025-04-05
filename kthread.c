@@ -2,7 +2,7 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <errno.h>
-
+#include <stdio.h>
 #define _GNU_SOURCE
 #include <unistd.h>
 #include <sys/syscall.h>

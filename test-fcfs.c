@@ -10,6 +10,7 @@ static int parent_first = -1;
 static void *
 subthread_main(void *arg)
 {
+	
 	CHECKPOINT(2);
 
 	return NULL;
@@ -27,7 +28,7 @@ static void *
 thread_main(void *arg)
 {
 	CHECKPOINT(1);
-
+	
 	THREAD(subthread_main);
 	if (parent_first) {
 		kfc_yield();

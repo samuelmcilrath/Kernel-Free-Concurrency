@@ -1,0 +1,9 @@
+Lock Planning
+
+    - thread storage
+
+    - k storage
+
+shouldn't ever need something for this past a certain point because its only modified in the trampoline??? The index, shouldn't change, neither should the scheduler
+
+- queue

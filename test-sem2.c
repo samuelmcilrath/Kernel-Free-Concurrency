@@ -10,7 +10,7 @@ thread(void *arg)
 	kfc_sem_post(&sem);
 	CHECKPOINT(3);
 	kfc_yield();
-
+	
 	CHECKPOINT(5);
 	kfc_yield();
 	CHECKPOINT(6);
@@ -25,6 +25,7 @@ thread(void *arg)
 int
 main(void)
 {
+	
 	INIT(1, 0);
 
 	kfc_sem_init(&sem, 0);
@@ -32,15 +33,20 @@ main(void)
 	CHECKPOINT(0);
 	tid_t thr = THREAD(thread);
 	CHECKPOINT(1);
-
+	
 	kfc_sem_wait(&sem);
+	
 	CHECKPOINT(4);
 
+	
 	kfc_sem_wait(&sem);
+
 	CHECKPOINT(8);
 
 	void *retval;
+
 	kfc_join(thr, &retval);
+
 	kfc_sem_destroy(&sem);
 
 	VERIFY(10);

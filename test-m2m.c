@@ -50,11 +50,12 @@ main(void)
 	tid_t tid0, tid1;
 	void *dummy;
 
-	INIT(KTHREADS, 0);
 
+	INIT(KTHREADS, 0);
+	
 	tid0 = THREAD(thread0);
 	tid1 = THREAD(thread1);
-
+	
 	kfc_join(tid0, &dummy);
 	kfc_join(tid1, &dummy);
 
@@ -79,5 +80,6 @@ main(void)
 	ASSERT(end.tv_sec < 1 && end.tv_nsec <= 1500 * EACH_SLEEP,
 			"threads not sleeping in parallel?");
 
+	
 	VERIFY(0);
 }

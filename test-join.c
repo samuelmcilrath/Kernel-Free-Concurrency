@@ -81,7 +81,6 @@ main(void)
 
 	CHECKPOINT(10);
 	kfc_join(tid, &ret);
-
 	ASSERT(ret == &othervar, "didn't get thread 2 return");
 
 	tid = THREAD(thread3_main);
@@ -92,9 +91,9 @@ main(void)
 	CHECKPOINT(12);
 
 	tid = THREAD(thread4_main);
-
+	DPRINTF("right before seg %d\n", tid);
 	kfc_join(tid, &ret);
-
+	
 	VERIFY(14);
 
 	return 0;
