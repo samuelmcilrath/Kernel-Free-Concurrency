@@ -271,7 +271,7 @@
 		DPRINTF("EXIT - kself:%d kindex:%d pid:%d\n" , kthread_self(), index, thread_storage[k_storage[index].curr_id].id);
 		assert(inited);
 		
-		kthread_mutex_lock(&t_lock);
+		
 		thread_storage[k_storage[index].curr_id].ret = ret;
 		thread_storage[k_storage[index].curr_id].fin = 1;
 		
@@ -314,14 +314,14 @@
 		DPRINTF("curr : %d joining with tid: %d fin status - %d \n", k_storage[index].curr_id, tid, thread_storage[tid].fin);
 		DPRINTF("Current kindex: %d\n", index);
 		
-		kthread_mutex_lock(&t_lock);
 		
 		//if target thread hasn't finished, wait and send back to scheduler
 		if(!thread_storage[tid].fin){
 			thread_storage[tid].join_id = k_storage[index].curr_id;
+			kthread_mutex_lock(&q_lock);
 			swapcontext(&thread_storage[k_storage[index].curr_id].context, &k_storage[index].scheduler);
 		}
-		kthread_mutex_unlock(&t_lock);
+		
 		
 		//Thread has finished and we want ret val
 		if(pret != NULL){
@@ -411,7 +411,7 @@
 		//if threads waiting 
 		if(sem->q.size){
 			kthread_mutex_lock(&q_lock);
-			queue_insert_first(&thread_q, queue_dequeue(&sem->q)); //inserts the thread waiting on the lock back to ready q
+			queue_enqueue(&thread_q, queue_dequeue(&sem->q)); //inserts the thread waiting on the lock back to ready q
 			kthread_cond_signal(&k_cond);
 			kthread_mutex_unlock(&q_lock);
 		}
@@ -447,7 +447,7 @@
 			queue_enqueue(&sem->q, &thread_storage[k_storage[index].curr_id].id);
 			
 			kthread_mutex_unlock(&sem_lock);
-			kthread_mutex_lock(&t_lock);
+			kthread_mutex_lock(&q_lock);
 			swapcontext(&thread_storage[k_storage[index].curr_id].context, &k_storage[index].scheduler);
 			kthread_mutex_lock(&sem_lock);
 		
@@ -480,7 +480,6 @@
 	kfc_schedule(){
 
 		DPRINTF("SCHEUDLE (outside unlock) - kself:%d\n", kthread_self());		
-		//kthread_mutex_unlock(&t_lock);
 		kthread_mutex_unlock(&q_lock);
 		int index = kfc_find_index();
 				
@@ -504,7 +503,7 @@
 		
 		DPRINTF("------ ENTERING THE SCHEDULER -----\n");
 		//tid_t *next_id = (tid_t *) queue_dequeue(&thread_q);
-		k_storage[index].curr_id = *(int *) queue_dequeue(&thread_q);
+		k_storage[index].curr_id = *(int *) queue_dequeue(&thread_q);		
 		kthread_cond_signal(&k_cond);
 		kthread_mutex_unlock(&q_lock);
 		
