@@ -6,7 +6,7 @@
 
 #define KTHREADS 4
 #define EACH_COUNT 1000000
-#define EACH_SLEEP 3000
+#define EACH_SLEEP 1000000
 
 int count = 0;
 

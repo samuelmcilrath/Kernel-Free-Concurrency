@@ -6,4 +6,12 @@ Lock Planning
 
 shouldn't ever need something for this past a certain point because its only modified in the trampoline??? The index, shouldn't change, neither should the scheduler
 
+actually with the k_storage curr id will be changing so maybe something there
+
+
 - queue
+
+
+
+OK so im noticing that all threads are being created by one thread and 
+their uc links are all that scheduler. will that have an impact?

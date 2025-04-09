@@ -23,6 +23,7 @@ void kthread_mutex_destroy(kthread_mutex_t *mutex);
 
 int kthread_cond_init(kthread_cond_t *cond);
 int kthread_cond_signal(kthread_cond_t *cond);
+int kthread_cond_broadcast(kthread_cond_t *cond);
 int kthread_cond_wait(kthread_cond_t *cond, kthread_mutex_t *mutex);
 void kthread_cond_destroy(kthread_cond_t *cond);
 
