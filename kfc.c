@@ -52,13 +52,16 @@
 		num_kthreads = kthreads;
 		inited = 1;
 
+		//initialize kstorage main thread
 		k_storage[0].k_id = kthread_self();
 		getcontext(&k_storage[0].scheduler);
 		k_storage[0].scheduler.uc_stack.ss_sp = malloc(KFC_DEF_STACK_SIZE);
 		k_storage[0].scheduler.uc_stack.ss_size = KFC_DEF_STACK_SIZE;
 		k_storage[0].scheduler.uc_stack.ss_flags = 0;
+		k_storage[0].curr_id = 0;
 		//what to set link to?
 		//k_storage[0].scheduler.uc_link = &thread_storage[0].context;
+
 		makecontext(&k_storage[0].scheduler, kfc_schedule, 0);
 
 		/*initialize variables s*/
@@ -76,6 +79,7 @@
 		thread_storage[0].context.uc_stack.ss_size = KFC_DEF_STACK_SIZE;
 		thread_storage[0].context.uc_stack.ss_flags = 0;
 		//thread_storage[0].context.uc_link = &k_storage[0].scheduler;
+		
 		//initialize id for later
 		for(int i = 1; i < KFC_MAX_THREADS; i++)
 			thread_storage[i].id = -1;
@@ -151,13 +155,13 @@
 
 		//scheduler setup
 		getcontext(&k_storage[index].scheduler);
+
 		k_storage[index].scheduler.uc_stack.ss_sp = malloc(KFC_DEF_STACK_SIZE);
 		k_storage[index].scheduler.uc_stack.ss_size = KFC_DEF_STACK_SIZE;
-		VALGRIND_STACK_REGISTER(k_storage[index].scheduler.uc_stack.ss_sp, k_storage[index].scheduler.uc_stack.ss_sp + KFC_DEF_STACK_SIZE);
 		k_storage[index].scheduler.uc_stack.ss_flags = 0;
-		//k_storage[index].scheduler.uc_link = NULL;
+		VALGRIND_STACK_REGISTER(k_storage[index].scheduler.uc_stack.ss_sp, k_storage[index].scheduler.uc_stack.ss_sp + KFC_DEF_STACK_SIZE);
+		
 		makecontext(&k_storage[index].scheduler, kfc_schedule, 0);
-
 		setcontext(&k_storage[index].scheduler);
 
 		return NULL;
@@ -189,11 +193,11 @@
 		int index = kfc_find_index();
 
 		//grab addr of current tcb 
-		getcontext(&thread_storage[k_storage[index].curr_id].context); //set tcb of main thread 
+		//getcontext(&thread_storage[k_storage[index].curr_id].context); //set tcb of main thread 
 
 		/*deal with thread id*/
 		//check if there are free ids
-		if(free_ids.size > 0){/*handle this later*/}
+		if(free_ids.size > 0){DPRINTF("SHOULD NEVER PRINT\n\n\n\n\n\n");}
 		else{
 			*ptid = id_count++; 
 			thread_storage[*ptid].id = *ptid;
@@ -238,6 +242,7 @@
 		
 		//add new thread to the q
 		kthread_mutex_lock(&q_lock);
+		DPRINTF("enq @create id %d\n ", thread_storage[k_storage[index].curr_id].id);
 		queue_enqueue(&thread_q, &thread_storage[*ptid].id);
 		kthread_cond_signal(&k_cond);
 		kthread_mutex_unlock(&q_lock);
@@ -277,7 +282,10 @@
 		
 		if(thread_storage[k_storage[index].curr_id].join_id != -1){
 			kthread_mutex_lock(&q_lock);
-			queue_enqueue(&thread_q, &thread_storage[k_storage[index].curr_id].join_id); //put the joining thread up next
+
+			DPRINTF("Enq @exit join id %d\n",thread_storage[k_storage[index].curr_id].join_id);
+
+			queue_enqueue(&thread_q, &thread_storage[thread_storage[k_storage[index].curr_id].join_id].id); //put the joining thread up next
 			//maybe signal here?
 			kthread_cond_signal(&k_cond);
 			kthread_mutex_unlock(&q_lock);
@@ -362,6 +370,7 @@
 
 		//add current context to the q
 		kthread_mutex_lock(&q_lock);
+		DPRINTF("enq @yield id %d\n", thread_storage[k_storage[index].curr_id].id);
 		queue_enqueue(&thread_q, &thread_storage[k_storage[index].curr_id].id);
 		kthread_cond_signal(&k_cond);
 		//kthread_mutex_unlock(&q_lock);
@@ -411,6 +420,7 @@
 		//if threads waiting 
 		if(sem->q.size){
 			kthread_mutex_lock(&q_lock);
+			DPRINTF("Enq @sempost\n");
 			queue_enqueue(&thread_q, queue_dequeue(&sem->q)); //inserts the thread waiting on the lock back to ready q
 			kthread_cond_signal(&k_cond);
 			kthread_mutex_unlock(&q_lock);
@@ -426,7 +436,7 @@
 	 * block when the counter is not above 0.
 	 *
 	 * @param sem  Pointer to the semaphore which the thread wishes to acquire
-	 *
+	 * .
 	 * @return 0 if successful, nonzero on failure
 	 */
 	int
@@ -503,6 +513,7 @@
 		
 		DPRINTF("------ ENTERING THE SCHEDULER -----\n");
 		//tid_t *next_id = (tid_t *) queue_dequeue(&thread_q);
+		assert(queue_size(&thread_q) != 0);
 		k_storage[index].curr_id = *(int *) queue_dequeue(&thread_q);		
 		kthread_cond_signal(&k_cond);
 		kthread_mutex_unlock(&q_lock);
