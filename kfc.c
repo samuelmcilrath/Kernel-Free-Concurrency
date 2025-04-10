@@ -7,6 +7,8 @@
 	#include "queue.h"
 	#include <sys/ucontext.h> // For REG_RIP
 	#include "valgrind/valgrind.h"
+    #include <unistd.h>
+
 
 	
 	//TODO need to make some sort of kernel storage 
@@ -64,6 +66,8 @@
 		thread_storage[k_storage[0].curr_id].id = k_storage[0].curr_id;
 		thread_storage[k_storage[0].curr_id].fin = 0;
 		thread_storage[k_storage[0].curr_id].join_id = -1;
+        thread_storage[k_storage[0].curr_id].join_id = 0;
+		thread_storage[k_storage[0].curr_id].context.uc_link = &k_storage[0].scheduler;
 		getcontext(&thread_storage[0].context);
 
         /*shouldn't need this since thread is alloc by user??
@@ -125,9 +129,23 @@
 		//signal any waiting threads 
 		for(int i = 0; i < num_kthreads; i++)
 			kthread_cond_signal(&k_cond);
+
+        sleep(5);
 		
+        for(int i = 0; i < KFC_MAX_THREADS; i++){
+            if(thread_storage[i].alloc)
+                free(thread_storage[i].context.uc_stack.ss_sp);
+        }
+
+        for(int i = 0; i < num_kthreads; i++)
+			free(k_storage[i].scheduler.uc_stack.ss_sp);
+
+
 		kthread_cond_destroy(&k_cond);
 		kthread_mutex_destroy(&k_lock);
+        kthread_mutex_destroy(&q_lock);
+        kthread_mutex_destroy(&t_lock);
+        kthread_mutex_destroy(&sem_lock);
 	}
 
 	/**
@@ -141,7 +159,8 @@
 	kfc_ktrampoline(void *arg){
 		
 		int index = *(int *)arg;
-		DPRINTF("TRAMPOLINE - kself:%d kindex:%d\n", kthread_self(), index);	
+        free(arg);
+		DPRINTF("kself:%d - TRAMPOLINE -kindex:%d\n", kthread_self(), index);	
 
 		assert(k_storage[index].k_id == kthread_self()); //should be = because kthread_create
 
@@ -157,7 +176,7 @@
 		
 		makecontext(&k_storage[index].scheduler, kfc_schedule, 0);
 		kthread_mutex_lock(&q_lock);
-		DPRINTF("tramp - Q locked !!!\n");
+		DPRINTF("kself:%d -tramp - Q locked !!!\n", kthread_self());
 		setcontext(&k_storage[index].scheduler);
 
 		return NULL;
@@ -215,10 +234,12 @@
 		if(stack_base == NULL){
 			thread_storage[*ptid].context.uc_stack.ss_sp = malloc(stack_size);
 			thread_storage[*ptid].context.uc_stack.ss_size = stack_size;
+            thread_storage[*ptid].alloc = 1;
 		}
 		else{
 			thread_storage[*ptid].context.uc_stack.ss_sp = stack_base;
 			thread_storage[*ptid].context.uc_stack.ss_size = stack_size;
+            thread_storage[*ptid].alloc = 0;
 		}
 		
 		VALGRIND_STACK_REGISTER(thread_storage[*ptid].context.uc_stack.ss_sp, thread_storage[*ptid].context.uc_stack.ss_sp + stack_size);
@@ -279,25 +300,22 @@
 		assert(inited);
 		
         //set TCB fields
+        kthread_mutex_lock(&q_lock);
 		thread_storage[k_storage[index].curr_id].ret = ret;
 		thread_storage[k_storage[index].curr_id].fin = 1;
 		
         //If thread is waiting to join -> put waiting thread back on ready q
 		if(thread_storage[k_storage[index].curr_id].join_id != -1){
-			kthread_mutex_lock(&q_lock);
-
-			DPRINTF("\n exit - Q locked !!!\n");
+			
+			DPRINTF("exit - Q locked !!!\n");
 			DPRINTF("Enq @exit join id %d\n",thread_storage[k_storage[index].curr_id].join_id);
 
 			queue_enqueue(&thread_q, &thread_storage[thread_storage[k_storage[index].curr_id].join_id].id); //put the joining thread up next
 			kthread_cond_signal(&k_cond);
-			kthread_mutex_unlock(&q_lock);
-			DPRINTF("\n exit - Q Unlocked !!!\n");
+			DPRINTF("exit - Q Unlocked !!!\n");
 		}
-		kthread_mutex_lock(&q_lock); //this was commented out but I think was problematic
-
-		DPRINTF("\n exit bot - Q locked !!!\n");
-
+		
+		DPRINTF("exit bot - Q locked !!!\n");
 		setcontext(&k_storage[index].scheduler); //pretty sure this needs to be here
 
 	}
@@ -325,24 +343,29 @@
 		DPRINTF("kself:%d - JOIN - kindex:%d\n", kthread_self(), index);		
 
 		assert(inited);
-		DPRINTF("curr : %d joining with tid: %d fin status - %d \n", k_storage[index].curr_id, tid, thread_storage[tid].fin);
+		//DPRINTF("curr : %d joining with tid: %d fin status - %d \n", k_storage[index].curr_id, tid, thread_storage[tid].fin);
 		
 		
 		//if target thread hasn't finished, wait and send back to scheduler
+        kthread_mutex_lock(&q_lock);
 		if(!thread_storage[tid].fin){
 			thread_storage[tid].join_id = k_storage[index].curr_id;
-			kthread_mutex_lock(&q_lock);
-			DPRINTF("\n join - Q locked !!!\n");
+			DPRINTF("join - Q locked !!!\n");
 			swapcontext(&thread_storage[k_storage[index].curr_id].context, &k_storage[index].scheduler);
 		}
-		
+		kthread_mutex_unlock(&q_lock); //this could be problematic, might need to reacquire lock at bottom of if
 		
 		//Thread has finished and we want ret val
 		if(pret != NULL){
 			*pret = thread_storage[tid].ret;
 		}
-		
-		//free(thread_storage[tid].context.uc_stack.ss_sp); //free the joined thread
+
+    
+        //I'll jst free in teardown later
+		if (thread_storage[tid].alloc) {
+			free(thread_storage[tid].context.uc_stack.ss_sp);
+			thread_storage[tid].alloc = 0;
+		}
 		return 0;
 	}
 
@@ -376,12 +399,12 @@
 
 		//add current context to the q
 		kthread_mutex_lock(&q_lock);
-		DPRINTF("\n yield - Q locked !!!\n");
+
+		DPRINTF("yield - Q locked !!!\n");
 		DPRINTF("enq @yield id %d\n", thread_storage[k_storage[index].curr_id].id);
+
 		queue_enqueue(&thread_q, &thread_storage[k_storage[index].curr_id].id);
 		kthread_cond_signal(&k_cond);
-		//kthread_mutex_unlock(&q_lock);
-		
 		swapcontext(&thread_storage[k_storage[index].curr_id].context, &k_storage[index].scheduler);
 		
 	}
@@ -427,16 +450,16 @@
 		//if threads waiting 
 		if(sem->q.size){
 			kthread_mutex_lock(&q_lock);
-			DPRINTF("\n sempost - Q locked !!!\n");
+			DPRINTF("sempost - Q locked !!!\n");
 			DPRINTF("Enq @sempost\n");
 			queue_enqueue(&thread_q, queue_dequeue(&sem->q)); //inserts the thread waiting on the lock back to ready q
 			kthread_cond_signal(&k_cond);
 			kthread_mutex_unlock(&q_lock);
-			DPRINTF("\nsem- Q Unlocked !!!\n");
+			DPRINTF("sem- Q Unlocked !!!\n");
 		}
 		
 		kthread_mutex_unlock(&sem_lock);
-		DPRINTF("\nsem - Q Unlocked !!!\n");
+		DPRINTF("sem - Q Unlocked !!!\n");
 		return 0;
 	}
 
@@ -454,7 +477,7 @@
 	{
 		
 		int index = kfc_find_index();
-		DPRINTF(" kself:%d - SEMWAIT - kindex:%d\n", kthread_self(), index);		
+		DPRINTF("kself:%d - SEMWAIT - kindex:%d\n", kthread_self(), index);		
 
 		assert(inited);
 		//DPRINTF("id %d calling wait\n", curr_id);
@@ -469,7 +492,7 @@
 			kthread_mutex_unlock(&sem_lock);
 			
 			kthread_mutex_lock(&q_lock);
-			DPRINTF("\nsem wait - Q locked !!!\n");
+			DPRINTF("sem wait - Q locked !!!\n");
 			swapcontext(&thread_storage[k_storage[index].curr_id].context, &k_storage[index].scheduler);
 			kthread_mutex_lock(&sem_lock);
 		
@@ -501,19 +524,23 @@
 	void
 	kfc_schedule(){
 
-		DPRINTF(" kself:%d - SCHEUDLE (outside unlock) -\n", kthread_self());		
+		DPRINTF("kself:%d - SCHEUDLE (outside unlock) -\n", kthread_self());		
 		kthread_mutex_unlock(&q_lock);
-		DPRINTF("\nsched - Q Unlocked !!!\n");
+		DPRINTF("sched - Q Unlocked !!!\n");
 		int index = kfc_find_index();
 				
 		//when the queue doesn't have anything, block until signalled
 		kthread_mutex_lock(&q_lock);
-		DPRINTF("\n schedule top - Q locked !!!\n");
+
+		DPRINTF("schedule top - Q locked !!!\n");
 		DPRINTF("kself:%d - SCHEDULE (inside unlock) -  kindex:%d\n", kthread_self(), index);
+
 		while(queue_size(&thread_q) == 0){
 			if(shutdown){
 				kthread_mutex_unlock(&q_lock);
-				DPRINTF("\n sched shutdown - Q Unlocked !!!\n");
+
+				DPRINTF("sched shutdown - Q Unlocked !!!\n");
+
 				return;
 			}
 			DPRINTF("kself:%d SCHEDULE (cond wait) - kindex:%d\n", kthread_self(), index);
@@ -523,21 +550,13 @@
 		}
 			
 		DPRINTF("kself:%d - SCHEDULE (past cond wait) -kindex:%d\n", kthread_self(), index);
-		//if thread isn't empty then get next item and swap into it
-		//needs to be while loop for when we get back from swapcontext
-		
-		DPRINTF("------ ENTERING THE SCHEDULER -----\n");
-		//tid_t *next_id = (tid_t *) queue_dequeue(&thread_q);
+
 		assert(queue_size(&thread_q) != 0);
 		k_storage[index].curr_id = *(int *) queue_dequeue(&thread_q);		
 		kthread_cond_signal(&k_cond);
 		kthread_mutex_unlock(&q_lock);
 		DPRINTF("sched(bot) - Q Unlocked !!!\n");
 		
-
-		//thread_storage[*next_id].context.uc_link = &k_storage[index].scheduler; //make sure it returns to scheduler; should this be changed with m2m?
-		//k_storage[index].curr_id = *next_id; //set the curr_id; only should* be accessed by this kthread?? CAUSING SEG FAULT
-
 		DPRINTF("Setting kthread_%d user context to thread: %d\n", index, k_storage[index].curr_id);
 
 		setcontext(&thread_storage[k_storage[index].curr_id].context);
