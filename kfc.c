@@ -272,23 +272,24 @@
 		assert(inited);
 		
         //set TCB fields
+		kthread_mutex_lock(&q_lock);
 		k_storage[index].curr_tcb->ret = ret;
 		k_storage[index].curr_tcb->fin = 1;
 		
         //If thread is waiting to join -> put waiting thread back on ready q
 		if(k_storage[index].curr_tcb->join_id != -1){
-			kthread_mutex_lock(&q_lock);
+			
 
 			DPRINTF("exit - Q locked !!!\n");
 			DPRINTF("Enq @exit join id %d\n",k_storage[index].curr_tcb->join_id);
 
 			queue_enqueue(&thread_q, &thread_storage[k_storage[index].curr_tcb->join_id]);
-			//queue_enqueue(&thread_q, &thread_storage[thread_storage[k_storage[index].curr_id].join_id].id); //put the joining thread up next
+			//kthread_mutex_unlock(&q_lock);
+
 			kthread_cond_broadcast(&q_cond);
-			kthread_mutex_unlock(&q_lock);
 			DPRINTF("exit - Q Unlocked !!!\n");
 		}
-		kthread_mutex_lock(&q_lock); //this was commented out but I think was problematic
+		//kthread_mutex_lock(&q_lock); //this was commented out but I think was problematic
 
 		DPRINTF("exit bot - Q locked !!!\n");
 
@@ -318,16 +319,18 @@
 		int index = kfc_find_index();
 		DPRINTF("kself:%d - JOIN - kindex:%d\n", kthread_self(), index);		
 
-		assert(inited);
-		DPRINTF("curr : %d joining with tid: %d fin status - %d \n", k_storage[index].curr_tcb->id, tid, thread_storage[tid].fin);
-		
+		assert(inited);		
 		//if target thread hasn't finished, wait and send back to scheduler
+		kthread_mutex_lock(&q_lock);
 		if(!thread_storage[tid].fin){
 			thread_storage[tid].join_id = k_storage[index].curr_tcb->id;
-			kthread_mutex_lock(&q_lock);
+
 			DPRINTF("join - Q locked !!!\n");
+
 			swapcontext(&k_storage[index].curr_tcb->context, &k_storage[index].scheduler);
+			kthread_mutex_lock(&q_lock);//reaqcuire so no accidental unlock
 		}
+		kthread_mutex_unlock(&q_lock);
 		
 		
 		//Thread has finished and we want ret val
@@ -371,10 +374,9 @@
 		kthread_mutex_lock(&q_lock);
 		DPRINTF("yield - Q locked !!!\n");
 		DPRINTF("enq @yield id %d\n", k_storage[index].curr_tcb->id);
+		
 		queue_enqueue(&thread_q, &k_storage[index].curr_tcb);
-		//queue_enqueue(&thread_q, &thread_storage[k_storage[index].curr_id].id);
 		kthread_cond_broadcast(&q_cond);
-		//kthread_mutex_unlock(&q_lock);
 		
 		swapcontext(&k_storage[index].curr_tcb->context, &k_storage[index].scheduler);
 		
