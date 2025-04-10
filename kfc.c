@@ -72,14 +72,27 @@
 		thread_storage[k_storage[0].curr_id].id = k_storage[0].curr_id;
 		thread_storage[k_storage[0].curr_id].fin = 0;
 		thread_storage[k_storage[0].curr_id].join_id = -1;
+		getcontext(&thread_storage[0].context);
 
+		thread_storage[0].context.uc_stack.ss_sp = malloc(KFC_DEF_STACK_SIZE);
+		if (!thread_storage[0].context.uc_stack.ss_sp) {
+			perror("malloc main thread stack");
+			return -1;
+		}
+		VALGRIND_STACK_REGISTER(thread_storage[0].context.uc_stack.ss_sp,thread_storage[0].context.uc_stack.ss_sp + KFC_DEF_STACK_SIZE);
+		thread_storage[0].context.uc_stack.ss_size = KFC_DEF_STACK_SIZE;
+		thread_storage[0].context.uc_stack.ss_flags = 0;
+		// Set up its link so that if it returns, control goes to the scheduler.
+		thread_storage[0].context.uc_link = &k_storage[0].scheduler;
+
+		/*
 		getcontext(&thread_storage[0].context);
 		thread_storage[0].context.uc_stack.ss_sp = malloc(KFC_DEF_STACK_SIZE);
 		VALGRIND_STACK_REGISTER(thread_storage[0].context.uc_stack.ss_sp, thread_storage[0].context.uc_stack.ss_sp + KFC_DEF_STACK_SIZE);
 		thread_storage[0].context.uc_stack.ss_size = KFC_DEF_STACK_SIZE;
 		thread_storage[0].context.uc_stack.ss_flags = 0;
 		//thread_storage[0].context.uc_link = &k_storage[0].scheduler;
-		
+		*/
 		//initialize id for later
 		for(int i = 1; i < KFC_MAX_THREADS; i++)
 			thread_storage[i].id = -1;
@@ -162,6 +175,8 @@
 		VALGRIND_STACK_REGISTER(k_storage[index].scheduler.uc_stack.ss_sp, k_storage[index].scheduler.uc_stack.ss_sp + KFC_DEF_STACK_SIZE);
 		
 		makecontext(&k_storage[index].scheduler, kfc_schedule, 0);
+		kthread_mutex_lock(&q_lock);
+		DPRINTF("\n tramp - Q locked !!!\n");
 		setcontext(&k_storage[index].scheduler);
 
 		return NULL;
@@ -242,10 +257,12 @@
 		
 		//add new thread to the q
 		kthread_mutex_lock(&q_lock);
-		DPRINTF("enq @create id %d\n ", thread_storage[k_storage[index].curr_id].id);
+		DPRINTF("\ncreate - Q locked !!!\n");
+		DPRINTF("enq @create id %d\n ", thread_storage[*ptid].id);
 		queue_enqueue(&thread_q, &thread_storage[*ptid].id);
 		kthread_cond_signal(&k_cond);
 		kthread_mutex_unlock(&q_lock);
+		DPRINTF("\n create - Q Unlocked !!!\n");
 		
 		return 0;
 	}
@@ -282,15 +299,17 @@
 		
 		if(thread_storage[k_storage[index].curr_id].join_id != -1){
 			kthread_mutex_lock(&q_lock);
-
+			DPRINTF("\n exit - Q locked !!!\n");
 			DPRINTF("Enq @exit join id %d\n",thread_storage[k_storage[index].curr_id].join_id);
 
 			queue_enqueue(&thread_q, &thread_storage[thread_storage[k_storage[index].curr_id].join_id].id); //put the joining thread up next
 			//maybe signal here?
 			kthread_cond_signal(&k_cond);
 			kthread_mutex_unlock(&q_lock);
+			DPRINTF("\n exit - Q Unlocked !!!\n");
 		}
-		//kthread_mutex_lock(&q_lock); uncomment if lock prb
+		kthread_mutex_lock(&q_lock); //this was commented out but I think was problematic
+		DPRINTF("\n exit bot - Q locked !!!\n");
 		setcontext(&k_storage[index].scheduler);
 
 	}
@@ -327,6 +346,7 @@
 		if(!thread_storage[tid].fin){
 			thread_storage[tid].join_id = k_storage[index].curr_id;
 			kthread_mutex_lock(&q_lock);
+			DPRINTF("\n join - Q locked !!!\n");
 			swapcontext(&thread_storage[k_storage[index].curr_id].context, &k_storage[index].scheduler);
 		}
 		
@@ -336,7 +356,7 @@
 			*pret = thread_storage[tid].ret;
 		}
 		
-		free(thread_storage[tid].context.uc_stack.ss_sp); //free the joined thread
+		//free(thread_storage[tid].context.uc_stack.ss_sp); //free the joined thread
 		return 0;
 	}
 
@@ -370,6 +390,7 @@
 
 		//add current context to the q
 		kthread_mutex_lock(&q_lock);
+		DPRINTF("\n yield - Q locked !!!\n");
 		DPRINTF("enq @yield id %d\n", thread_storage[k_storage[index].curr_id].id);
 		queue_enqueue(&thread_q, &thread_storage[k_storage[index].curr_id].id);
 		kthread_cond_signal(&k_cond);
@@ -420,13 +441,16 @@
 		//if threads waiting 
 		if(sem->q.size){
 			kthread_mutex_lock(&q_lock);
+			DPRINTF("\n sempost - Q locked !!!\n");
 			DPRINTF("Enq @sempost\n");
 			queue_enqueue(&thread_q, queue_dequeue(&sem->q)); //inserts the thread waiting on the lock back to ready q
 			kthread_cond_signal(&k_cond);
 			kthread_mutex_unlock(&q_lock);
+			DPRINTF("\nsem- Q Unlocked !!!\n");
 		}
 		
 		kthread_mutex_unlock(&sem_lock);
+		DPRINTF("\nsem - Q Unlocked !!!\n");
 		return 0;
 	}
 
@@ -457,7 +481,9 @@
 			queue_enqueue(&sem->q, &thread_storage[k_storage[index].curr_id].id);
 			
 			kthread_mutex_unlock(&sem_lock);
+			
 			kthread_mutex_lock(&q_lock);
+			DPRINTF("\nsem wait - Q locked !!!\n");
 			swapcontext(&thread_storage[k_storage[index].curr_id].context, &k_storage[index].scheduler);
 			kthread_mutex_lock(&sem_lock);
 		
@@ -491,14 +517,17 @@
 
 		DPRINTF("SCHEUDLE (outside unlock) - kself:%d\n", kthread_self());		
 		kthread_mutex_unlock(&q_lock);
+		DPRINTF("\nsched - Q Unlocked !!!\n");
 		int index = kfc_find_index();
 				
 		//when the queue doesn't have anything, block until signalled
 		kthread_mutex_lock(&q_lock);
+		DPRINTF("\n schedule top - Q locked !!!\n");
 		DPRINTF("SCHEDULE (inside unlock) - kself:%d kindex:%d\n", kthread_self(), index);
 		while(queue_size(&thread_q) == 0){
 			if(shutdown){
 				kthread_mutex_unlock(&q_lock);
+				DPRINTF("\n sched shutdown - Q Unlocked !!!\n");
 				return;
 			}
 			DPRINTF("SCHEDULE (cond wait) - kself:%d kindex:%d\n", kthread_self(), index);
@@ -517,6 +546,7 @@
 		k_storage[index].curr_id = *(int *) queue_dequeue(&thread_q);		
 		kthread_cond_signal(&k_cond);
 		kthread_mutex_unlock(&q_lock);
+		DPRINTF("\nsched(bot) - Q Unlocked !!!\n");
 		
 
 		//thread_storage[*next_id].context.uc_link = &k_storage[index].scheduler; //make sure it returns to scheduler; should this be changed with m2m?
