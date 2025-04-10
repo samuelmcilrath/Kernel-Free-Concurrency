@@ -24,7 +24,7 @@ typedef unsigned int tid_t;
 typedef struct{
 	tid_t id; //id field, should just be the index in the storage array
 	int fin; //indicates if thread is finished
-
+	int alloc;//indicates if stack was dynamically allocated
 	int join_id; //id of thread trying to join
 
 	ucontext_t context; 
@@ -40,7 +40,7 @@ typedef struct {
 
 typedef struct{
 	kthread_t k_id;
-	tid_t curr_id;
+	tcb_t *curr_tcb;
 	ucontext_t scheduler;
 }ktcb_t;
 
