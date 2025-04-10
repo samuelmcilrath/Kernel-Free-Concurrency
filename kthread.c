@@ -169,6 +169,9 @@ int kthread_cond_signal(kthread_cond_t *cond) {
 	return pthread_cond_signal(cond);
 }
 
+int kthread_cond_broadcast(kthread_cond_t *cond) {
+	return pthread_cond_broadcast(cond);
+}
 
 int kthread_cond_wait(kthread_cond_t *cond, kthread_mutex_t *mutex) {
 	return pthread_cond_wait(cond, mutex);

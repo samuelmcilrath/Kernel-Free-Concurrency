@@ -124,7 +124,7 @@
 
 		//signal any waiting threads 
 		for(int i = 0; i < num_kthreads; i++)
-			kthread_cond_signal(&k_cond);
+			kthread_cond_broadcast(&k_cond);
 		
 		kthread_cond_destroy(&k_cond);
 		kthread_mutex_destroy(&k_lock);
@@ -237,10 +237,10 @@
 		kthread_mutex_lock(&q_lock);
 
 		DPRINTF("create - Q locked !!!\n");
-		DPRINTF("enq @create id %d\n ", thread_storage[*ptid].id);
+		DPRINTF("enq @create id %d", thread_storage[*ptid].id);
 
 		queue_enqueue(&thread_q, &thread_storage[*ptid].id);
-		kthread_cond_signal(&k_cond);
+		kthread_cond_broadcast(&k_cond);
 
 		kthread_mutex_unlock(&q_lock);
 		DPRINTF("create - Q Unlocked !!!\n");
@@ -286,17 +286,17 @@
 		if(thread_storage[k_storage[index].curr_id].join_id != -1){
 			kthread_mutex_lock(&q_lock);
 
-			DPRINTF("\n exit - Q locked !!!\n");
+			DPRINTF("exit - Q locked !!!\n");
 			DPRINTF("Enq @exit join id %d\n",thread_storage[k_storage[index].curr_id].join_id);
 
 			queue_enqueue(&thread_q, &thread_storage[thread_storage[k_storage[index].curr_id].join_id].id); //put the joining thread up next
-			kthread_cond_signal(&k_cond);
+			kthread_cond_broadcast(&k_cond);
 			kthread_mutex_unlock(&q_lock);
-			DPRINTF("\n exit - Q Unlocked !!!\n");
+			DPRINTF("exit - Q Unlocked !!!\n");
 		}
 		kthread_mutex_lock(&q_lock); //this was commented out but I think was problematic
 
-		DPRINTF("\n exit bot - Q locked !!!\n");
+		DPRINTF("exit bot - Q locked !!!\n");
 
 		setcontext(&k_storage[index].scheduler); //pretty sure this needs to be here
 
@@ -332,7 +332,7 @@
 		if(!thread_storage[tid].fin){
 			thread_storage[tid].join_id = k_storage[index].curr_id;
 			kthread_mutex_lock(&q_lock);
-			DPRINTF("\n join - Q locked !!!\n");
+			DPRINTF("join - Q locked !!!\n");
 			swapcontext(&thread_storage[k_storage[index].curr_id].context, &k_storage[index].scheduler);
 		}
 		
@@ -376,10 +376,10 @@
 
 		//add current context to the q
 		kthread_mutex_lock(&q_lock);
-		DPRINTF("\n yield - Q locked !!!\n");
+		DPRINTF("yield - Q locked !!!\n");
 		DPRINTF("enq @yield id %d\n", thread_storage[k_storage[index].curr_id].id);
 		queue_enqueue(&thread_q, &thread_storage[k_storage[index].curr_id].id);
-		kthread_cond_signal(&k_cond);
+		kthread_cond_broadcast(&k_cond);
 		//kthread_mutex_unlock(&q_lock);
 		
 		swapcontext(&thread_storage[k_storage[index].curr_id].context, &k_storage[index].scheduler);
@@ -427,10 +427,10 @@
 		//if threads waiting 
 		if(sem->q.size){
 			kthread_mutex_lock(&q_lock);
-			DPRINTF("\n sempost - Q locked !!!\n");
+			DPRINTF("sempost - Q locked !!!\n");
 			DPRINTF("Enq @sempost\n");
 			queue_enqueue(&thread_q, queue_dequeue(&sem->q)); //inserts the thread waiting on the lock back to ready q
-			kthread_cond_signal(&k_cond);
+			kthread_cond_broadcast(&k_cond);
 			kthread_mutex_unlock(&q_lock);
 			DPRINTF("\nsem- Q Unlocked !!!\n");
 		}
@@ -508,12 +508,12 @@
 				
 		//when the queue doesn't have anything, block until signalled
 		kthread_mutex_lock(&q_lock);
-		DPRINTF("\n schedule top - Q locked !!!\n");
+		DPRINTF("schedule top - Q locked !!!\n");
 		DPRINTF("kself:%d - SCHEDULE (inside unlock) -  kindex:%d\n", kthread_self(), index);
 		while(queue_size(&thread_q) == 0){
 			if(shutdown){
 				kthread_mutex_unlock(&q_lock);
-				DPRINTF("\n sched shutdown - Q Unlocked !!!\n");
+				DPRINTF("sched shutdown - Q Unlocked !!!\n");
 				return;
 			}
 			DPRINTF("kself:%d SCHEDULE (cond wait) - kindex:%d\n", kthread_self(), index);
@@ -526,20 +526,13 @@
 		//if thread isn't empty then get next item and swap into it
 		//needs to be while loop for when we get back from swapcontext
 		
-		DPRINTF("------ ENTERING THE SCHEDULER -----\n");
-		//tid_t *next_id = (tid_t *) queue_dequeue(&thread_q);
+		
 		assert(queue_size(&thread_q) != 0);
 		k_storage[index].curr_id = *(int *) queue_dequeue(&thread_q);		
-		kthread_cond_signal(&k_cond);
+		kthread_cond_broadcast(&k_cond);
 		kthread_mutex_unlock(&q_lock);
 		DPRINTF("sched(bot) - Q Unlocked !!!\n");
 		
-
-		//thread_storage[*next_id].context.uc_link = &k_storage[index].scheduler; //make sure it returns to scheduler; should this be changed with m2m?
-		//k_storage[index].curr_id = *next_id; //set the curr_id; only should* be accessed by this kthread?? CAUSING SEG FAULT
-
-		DPRINTF("Setting kthread_%d user context to thread: %d\n", index, k_storage[index].curr_id);
-
 		setcontext(&thread_storage[k_storage[index].curr_id].context);
 
 		//should never make it past here
