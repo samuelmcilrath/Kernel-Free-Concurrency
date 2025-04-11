@@ -11,21 +11,15 @@
 
 
 	static int inited = 0;
-	ucontext_t currC;
 
 	ucontext_t scheduler; //context that acts as a scheduler
-	kthread_t kthread_storage [];
 	static kthread_mutex_t k_lock;
 	static kthread_cond_t k_cond;
 
 	static int id_count; //counter for current thread id
 	tid_t curr_id; //t id for the running thread 
 
-	static int k_count = 0;
-	kthread_t k_ids[MAX_KTHREADS];
-
 	tcb_t thread_storage [KFC_MAX_THREADS]; //pointer to global storage 
-	static queue_t free_ids; //q of free spots from thread storage if running thread exits and gives up id
 	queue_t thread_q; //fcfs q; this should be a queue of thread_id's not contexts
 
 
@@ -76,7 +70,6 @@
 			thread_storage[i].id = -1;
 		
 		//initialize q's 
-		queue_init(&free_ids);
 		queue_init(&thread_q);
 
 		
@@ -138,19 +131,12 @@
 		getcontext(&thread_storage[curr_id].context); //set tcb of main thread 
 
 		/*deal with thread id*/
-		//check if there are free ids
-		if(free_ids.size > 0){/*handle this later*/}
-		else{
-			*ptid = id_count++; 
-			thread_storage[*ptid].id = *ptid;
-		}
-		
-		
+		*ptid = id_count++; 
+		thread_storage[*ptid].id = *ptid;
 		
 		int err = 0; //check err
 		
 		//first allocate new context 
-		ucontext_t newC; 
 		err = getcontext(&thread_storage[*ptid].context);
 		if(err == -1){ //check return 
 			perror("getcontext err");
@@ -161,11 +147,12 @@
 		if(stack_size == 0)
 			stack_size = KFC_DEF_STACK_SIZE;
 		
-		//setup newC stack
+		//setup new stack
 		if(stack_base == NULL){
 			thread_storage[*ptid].context.uc_stack.ss_sp = malloc(stack_size);
 			thread_storage[*ptid].context.uc_stack.ss_size = stack_size;
-            thread_storage[*ptid].alloc = 1;		}
+            thread_storage[*ptid].alloc = 1;		
+		}
 		else{
 			thread_storage[*ptid].context.uc_stack.ss_sp = stack_base;
 			thread_storage[*ptid].context.uc_stack.ss_size = stack_size;
@@ -178,7 +165,6 @@
 		thread_storage[*ptid].fin = 0;
 		thread_storage[*ptid].join_id = -1;
 		
-
 		//make context
 		makecontext(&thread_storage[*ptid].context, (void (*)())kfc_handle, 2, start_func, arg);
 
@@ -186,8 +172,6 @@
 		
 		//add new thread to the q
 		queue_enqueue(&thread_q, &thread_storage[*ptid].id);
-		kthread_cond_signal(&k_cond);
-
 		
 		return 0;
 	}
@@ -198,8 +182,10 @@
 	void 
 	kfc_handle(void *(*start_func)(void *), void *arg){
 
-		void *ret  = start_func(arg);
+		//get return value and pass to exit
+		void *ret  = start_func(arg); 
 		kfc_exit(ret);
+
 		abort(); //should't reach
 		
 	}
@@ -216,9 +202,11 @@
 		
 		assert(inited);
 		
+		//modify tcb fields
 		thread_storage[curr_id].ret = ret;
 		thread_storage[curr_id].fin = 1;
 		
+		//if there is a thread wanting to join, add it back to the q
 		if(thread_storage[curr_id].join_id != -1)
 			queue_insert_first(&thread_q, &thread_storage[thread_storage[curr_id].join_id].id); //put the joining thread up next
 		swapcontext(&thread_storage[curr_id].context, &scheduler);
@@ -259,6 +247,7 @@
 			*pret = thread_storage[tid].ret;
 		}
 		
+		//free joined thread if dynamically alloc
 		if (thread_storage[tid].alloc) {
             free(thread_storage[tid].context.uc_stack.ss_sp);
             thread_storage[tid].alloc = 0; // Prevent double-free
@@ -385,7 +374,7 @@
 	void
 	kfc_schedule(){
 
-            //if thread isn't empty then get next item and swap into it
+        //if q isn't empty then get next item and swap into it
         //needs to be while loop for when we get back from swapcontext
         while (queue_size(&thread_q) > 0) {
             tid_t *next_id = (tid_t *) queue_dequeue(&thread_q);
